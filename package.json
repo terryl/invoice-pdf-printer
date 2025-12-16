@@ -12,6 +12,7 @@
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@vercel/kv": "^1.0.0",
     "@embedpdf/core": "^1.5.0",
     "@embedpdf/engines": "^1.5.0",
     "@embedpdf/plugin-export": "^1.5.0",

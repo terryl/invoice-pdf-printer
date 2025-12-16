@@ -1,0 +1,36 @@
+import { kv } from "@vercel/kv";
+
+export const config = { runtime: "edge" };
+
+export default async function handler(req: Request): Promise<Response> {
+  const headers = { "Content-Type": "application/json" };
+  if (req.method === "GET") {
+    const total = (await kv.get<number>("invoice_total_count")) ?? 0;
+    return new Response(
+      JSON.stringify({ success: true, data: { totalCount: total } }),
+      { status: 200, headers }
+    );
+  }
+  if (req.method === "POST") {
+    const body = await req.json().catch(() => null);
+    const count =
+      body && typeof body.count === "number" ? (body.count as number) : null;
+    if (count === null || count < 0) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid count" }),
+        { status: 400, headers }
+      );
+    }
+    const current = (await kv.get<number>("invoice_total_count")) ?? 0;
+    const next = current + count;
+    await kv.set("invoice_total_count", next);
+    return new Response(
+      JSON.stringify({ success: true, data: { totalCount: next } }),
+      { status: 200, headers }
+    );
+  }
+  return new Response(
+    JSON.stringify({ success: false, error: "Method Not Allowed" }),
+    { status: 405, headers }
+  );
+}

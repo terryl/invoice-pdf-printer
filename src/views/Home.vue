@@ -418,7 +418,21 @@ const displayPDF = (file: Blob): void => {
 };
 
 // 统计相关API方法
-const API_BASE_URL = "https://auth.yoloxy.com"; // 根据实际部署地址调整
+const API_BASE_URL = "";
+const LOCAL_KEY = "invoice_total_count";
+const getLocalCount = (): number => {
+  const v = localStorage.getItem(LOCAL_KEY);
+  const n = v ? parseInt(v, 10) : 0;
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+const setLocalCount = (n: number): void => {
+  localStorage.setItem(LOCAL_KEY, String(Math.max(0, Math.floor(n))));
+};
+const incLocalCount = (d: number): number => {
+  const next = getLocalCount() + d;
+  setLocalCount(next);
+  return next;
+};
 
 // 查询发票处理数量
 const fetchInvoiceCount = async (): Promise<void> => {
@@ -429,11 +443,13 @@ const fetchInvoiceCount = async (): Promise<void> => {
       if (data.success) {
         totalInvoiceCount.value = data.data.totalCount;
         showStats.value = true;
+        setLocalCount(totalInvoiceCount.value);
       }
     }
   } catch (error) {
-    console.error("Failed to fetch invoice count:", error);
-    showStats.value = false;
+    const local = getLocalCount();
+    totalInvoiceCount.value = local;
+    showStats.value = true;
   }
 };
 
@@ -453,11 +469,17 @@ const updateInvoiceCount = async (count: number): Promise<void> => {
       if (data.success) {
         totalInvoiceCount.value = data.data.totalCount;
         showStats.value = true;
+        setLocalCount(totalInvoiceCount.value);
       }
+    } else {
+      const next = incLocalCount(count);
+      totalInvoiceCount.value = next;
+      showStats.value = true;
     }
   } catch (error) {
-    console.error("Failed to update invoice count:", error);
-    showStats.value = false;
+    const next = incLocalCount(count);
+    totalInvoiceCount.value = next;
+    showStats.value = true;
   }
 };
 
