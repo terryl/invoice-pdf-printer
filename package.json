@@ -1,7 +1,7 @@
 {
   "name": "invoice-pdf-printer",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -30,6 +30,7 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^3.5.141",
     "tesseract.js": "^5.1.1",
+    "unpdf": "^1.4.0",
     "vue": "^3.5.17",
     "vue-draggable-resizable": "^3.0.0",
     "vue-pdf-embed": "^2.1.2"

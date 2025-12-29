@@ -1,5 +1,8 @@
 <template>
   <div class="flex flex-col h-screen w-full bg-gray-50">
+    <!-- PDF 引擎预加载（不渲染任何内容） -->
+    <PdfEnginePreloader />
+
     <!-- 顶部导航栏 -->
     <header
       ref="headerRef"
@@ -129,7 +132,7 @@
 
         <!-- 发票列表区域 -->
         <div
-          class="w-full md:w-80 h-full flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden"
+          class="w-full md:w-80 h-full flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden min-h-0"
         >
           <div
             class="px-4 py-3 border-b border-gray-100 bg-gray-50/50 flex-none"
@@ -218,7 +221,6 @@
 </template>
 
 <script setup lang="ts">
-import * as pdfjs from "pdfjs-dist";
 import { ref, onMounted, computed, type Ref } from "vue";
 import LoadingView from "../components/ui/LoadingView.vue";
 import InvoiceStats from "../components/business/InvoiceStats.vue";
@@ -226,7 +228,10 @@ import ProcessingToast from "../components/ui/ProcessingToast.vue";
 import InvoiceList from "../components/business/InvoiceList.vue";
 import BatchActionBar from "../components/ui/BatchActionBar.vue";
 import PdfViewer from "../components/pdf/PdfViewer.vue";
+import PdfEnginePreloader from "../components/pdf/PdfEnginePreloader.vue";
 import { getInvoiceType } from "../utils/invoiceUtils";
+
+// 降级方案：主线程处理
 import {
   processFiles,
   extractInvoiceData,
@@ -234,7 +239,7 @@ import {
 } from "../utils/pdfUtils";
 import type { InvoiceCell, PdfPageData } from "../types/invoice";
 
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+// PDF.js Worker 已在 pdfPreload.ts 中配置（本地化）
 
 // 数据缓存结构(用于增量处理)
 interface ProcessedData {
@@ -366,44 +371,49 @@ const handleMergePDFs = async (): Promise<void> => {
     isProcessing.value = true;
     error.value = null;
     progress.value = 0;
+    cells.value = []; // 清空，准备流式显示
 
-    // 每次都重新处理所有文件(避免 PDF 文档生命周期问题)
     console.log(`处理 ${files.length} 张发票`);
 
-    const allPages = await processFiles(files);
+    // 解析 PDF 页面
     progress.value = 30;
+    const allPages = await processFiles(files);
 
-    const invoiceData = await extractInvoiceData(allPages);
+    // 提取发票信息
     progress.value = 60;
+    const invoiceData = await extractInvoiceData(allPages);
 
     // 合并所有页面
+    progress.value = 80;
     const mergedPdf = await createMergedDocument(allPages, {
       pagesPerSheet: 2,
       targetPageSize: { width: 595.28, height: 841.89 },
       scale: 0.95,
     });
-    progress.value = 90;
 
     const pdfBytes = await mergedPdf.save({ updateFieldAppearances: false });
     const pdfBlob = new Blob([new Uint8Array(pdfBytes)], {
       type: "application/pdf",
     });
 
-    cells.value = invoiceData;
-    console.log(`PDF size: ${(pdfBlob.size / (1024 * 1024)).toFixed(2)} MB`);
     displayPDF(pdfBlob);
+
+    // 显示发票列表
+    cells.value = invoiceData;
+
     progress.value = 100;
 
-    // 发票处理完成后，更新统计数量
-    const processedCount = files.length;
-    if (processedCount > 0) {
-      await updateInvoiceCount(processedCount);
+    // 发票处理完成后，更新统计数量（不阻塞 UI）
+    if (files.length > 0) {
+      updateInvoiceCount(files.length).catch((e) =>
+        console.error("后台更新统计失败:", e)
+      );
     }
   } catch (err: any) {
     error.value = err.message || "处理过程中发生错误";
     console.error("PDF处理错误:", err);
   } finally {
-    setTimeout(() => (isProcessing.value = false), 500);
+    isProcessing.value = false;
   }
 };
 
@@ -453,8 +463,13 @@ const fetchInvoiceCount = async (): Promise<void> => {
   }
 };
 
-// 更新发票处理数量
+// 更新发票处理数量（仅生产环境上报）
 const updateInvoiceCount = async (count: number): Promise<void> => {
+  // 非生产环境不上报
+  if (!import.meta.env.PROD) {
+    return;
+  }
+
   try {
     const response = await fetch(`${API_BASE_URL}/api/stats/invoice-count`, {
       method: "POST",
@@ -536,5 +551,4 @@ function openPdfPreview() {
 .cell-list-move {
   transition: transform 0.5s ease; /* 确保移动动画一致 */
 }
-
 </style>
