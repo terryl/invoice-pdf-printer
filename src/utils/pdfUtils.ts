@@ -116,8 +116,12 @@ export async function processFiles(files: File[]): Promise<PdfPageData[]> {
       throwOnInvalidObject: false,
     });
     console.warn = originalWarn;
-    const pdfjsDocument = await pdfjs.getDocument({ data: arrayBuffer })
-      .promise;
+    const pdfjsDocument = await pdfjs.getDocument({
+      data: arrayBuffer,
+      cMapUrl: "/pdfjs-dist/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "/pdfjs-dist/standard_fonts/",
+    }).promise;
 
     // 已知每个文件都是单页发票：只处理第 1 页，避免无意义循环
     const j = 0;
@@ -679,6 +683,46 @@ function extractInvoiceNumber(textMap: any[]): string {
   return "";
 }
 
+function shouldRasterizeForMerge(sourceFile: string): boolean {
+  const name = (sourceFile ?? "").toLowerCase();
+  return name.includes("digital_") || name.includes("digital");
+}
+
+async function renderPdfjsPageToJpegBytes(
+  pdfjsPage: any,
+  options?: { maxPx?: number; quality?: number }
+): Promise<Uint8Array> {
+  const maxPx = options?.maxPx ?? 1800;
+  const quality = options?.quality ?? 0.92;
+
+  const baseViewport = pdfjsPage.getViewport({ scale: 1 });
+  const denom = Math.max(1, Math.max(baseViewport.width, baseViewport.height));
+  const scale = Math.min(4, Math.max(1, maxPx / denom));
+  const viewport = pdfjsPage.getViewport({ scale });
+
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("无法获取Canvas 2D渲染上下文");
+
+  canvas.width = Math.max(1, Math.floor(viewport.width));
+  canvas.height = Math.max(1, Math.floor(viewport.height));
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  await pdfjsPage.render({ canvasContext: context, viewport }).promise;
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("Canvas 导出失败"))),
+      "image/jpeg",
+      quality
+    );
+  });
+
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 /**
  * 创建合并后的PDF文档 - 使用智能布局算法
  */
@@ -712,23 +756,46 @@ export async function createMergedDocument(
       if (pageIndex >= allPages.length) break;
 
       try {
-        const { page } = allPages[pageIndex];
+        const pageData = allPages[pageIndex];
+        const { page, pdfjsPage, sourceFile } = pageData;
         const position = layout.positions[j];
 
-        // 直接使用已经处理过的页面（已经过裁剪和位置调整）
-        // 这样可以保留 processFiles 中对 bleedBox/cropBox 的处理结果
-        const embeddedPage = await outputPdfDoc.embedPage(page);
-
-        newPage.drawPage(embeddedPage, {
-          x: position.x,
-          y: position.y,
-          width: position.width,
-          height: position.height,
-        });
+        if (shouldRasterizeForMerge(sourceFile)) {
+          const jpegBytes = await renderPdfjsPageToJpegBytes(pdfjsPage);
+          const image = await outputPdfDoc.embedJpg(jpegBytes);
+          newPage.drawImage(image, {
+            x: position.x,
+            y: position.y,
+            width: position.width,
+            height: position.height,
+          });
+        } else {
+          const embeddedPage = await outputPdfDoc.embedPage(page);
+          newPage.drawPage(embeddedPage, {
+            x: position.x,
+            y: position.y,
+            width: position.width,
+            height: position.height,
+          });
+        }
       } catch (embedError) {
-        console.error(`嵌入页面 ${pageIndex + 1} 时出错:`, embedError);
-        // 跳过问题页面,继续处理下一页
-        continue;
+        try {
+          const pageData = allPages[pageIndex];
+          const { pdfjsPage } = pageData;
+          const position = layout.positions[j];
+          const jpegBytes = await renderPdfjsPageToJpegBytes(pdfjsPage);
+          const image = await outputPdfDoc.embedJpg(jpegBytes);
+          newPage.drawImage(image, {
+            x: position.x,
+            y: position.y,
+            width: position.width,
+            height: position.height,
+          });
+        } catch (fallbackError) {
+          console.error(`嵌入页面 ${pageIndex + 1} 时出错:`, embedError);
+          console.error(`页面 ${pageIndex + 1} 光栅化回退失败:`, fallbackError);
+          continue;
+        }
       }
     }
 

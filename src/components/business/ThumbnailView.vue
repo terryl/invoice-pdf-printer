@@ -46,7 +46,12 @@ const renderThumbnail = async (file: File, canvas: HTMLCanvasElement): Promise<v
   if (!canvas) return;
 
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjs.getDocument({
+    data: arrayBuffer,
+    cMapUrl: "/pdfjs-dist/cmaps/",
+    cMapPacked: true,
+    standardFontDataUrl: "/pdfjs-dist/standard_fonts/",
+  }).promise;
   const page = await pdf.getPage(1);
 
   const viewport = page.getViewport({ scale: 0.2 });
