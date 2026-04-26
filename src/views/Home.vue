@@ -63,6 +63,20 @@
             @change="handleFileChange"
             accept=".pdf"
           />
+          <label
+            for="folderInput"
+            class="px-3 py-1.5 md:px-4 md:py-2 bg-white text-gray-600 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 hover:text-gray-900 transition-all duration-200 flex items-center space-x-1 md:space-x-2 whitespace-nowrap"
+          >
+            <span class="text-xs md:text-sm font-medium">选择目录</span>
+          </label>
+          <input
+            id="folderInput"
+            type="file"
+            class="hidden"
+            multiple
+            webkitdirectory
+            @change="handleDirectoryChange"
+          />
 
           <button
             class="px-3 py-1.5 md:px-4 md:py-2 bg-white text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 hover:text-gray-900 transition-all duration-200 flex items-center space-x-1 md:space-x-2 whitespace-nowrap"
@@ -281,8 +295,11 @@ onMounted(() => {
   fetchInvoiceCount();
 });
 
-const dedupeFilesByName = (incomingFiles: File[]): File[] => {
-  const existingNames = new Set(selectedFiles.value.map((file) => file.name));
+const dedupeFilesByName = (
+  incomingFiles: File[],
+  existingFiles: File[] = selectedFiles.value
+): File[] => {
+  const existingNames = new Set(existingFiles.map((file) => file.name));
   const deduped: File[] = [];
 
   for (const file of incomingFiles) {
@@ -292,6 +309,17 @@ const dedupeFilesByName = (incomingFiles: File[]): File[] => {
   }
 
   return deduped;
+};
+
+const normalizeSelectedFiles = (): void => {
+  selectedFiles.value = dedupeFilesByName(selectedFiles.value, []);
+};
+
+const toPdfFiles = (files: File[]): File[] => {
+  return files.filter(
+    (file) =>
+      file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+  );
 };
 
 const clear = (): void => {
@@ -366,6 +394,7 @@ const handleDrop = (event: DragEvent): void => {
   const dedupedFiles = dedupeFilesByName(files);
   if (dedupedFiles.length === 0) return;
   selectedFiles.value.push(...dedupedFiles);
+  normalizeSelectedFiles();
   isLoading.value = true;
   handleMergePDFs().finally(() => (isLoading.value = false));
 };
@@ -378,6 +407,7 @@ const regeneratePDF = async (): Promise<void> => {
 // 使用新的PDF工具函数处理合并
 const handleMergePDFs = async (): Promise<void> => {
   try {
+    normalizeSelectedFiles();
     const files = selectedFiles.value;
     if (!files?.length) {
       throw new Error("请选择PDF文件");
@@ -515,8 +545,13 @@ const updateInvoiceCount = async (count: number): Promise<void> => {
 
 // 处理文件选择
 const handleFileChange = async (event: Event): Promise<void> => {
-  const files = Array.from((event.target as HTMLInputElement).files || []);
-  if (files.length === 0) return;
+  const files = toPdfFiles(
+    Array.from((event.target as HTMLInputElement).files || [])
+  );
+  if (files.length === 0) {
+    (event.target as HTMLInputElement).value = ""; // 清空 input
+    return;
+  }
 
   const dedupedFiles = dedupeFilesByName(files);
   if (dedupedFiles.length === 0) {
@@ -525,6 +560,30 @@ const handleFileChange = async (event: Event): Promise<void> => {
   }
 
   selectedFiles.value.push(...dedupedFiles);
+  normalizeSelectedFiles();
+  isLoading.value = true;
+  await handleMergePDFs();
+  isLoading.value = false;
+  (event.target as HTMLInputElement).value = ""; // 清空 input
+};
+
+const handleDirectoryChange = async (event: Event): Promise<void> => {
+  const files = toPdfFiles(
+    Array.from((event.target as HTMLInputElement).files || [])
+  );
+  if (files.length === 0) {
+    (event.target as HTMLInputElement).value = ""; // 清空 input
+    return;
+  }
+
+  const dedupedFiles = dedupeFilesByName(files);
+  if (dedupedFiles.length === 0) {
+    (event.target as HTMLInputElement).value = ""; // 清空 input
+    return;
+  }
+
+  selectedFiles.value.push(...dedupedFiles);
+  normalizeSelectedFiles();
   isLoading.value = true;
   await handleMergePDFs();
   isLoading.value = false;
