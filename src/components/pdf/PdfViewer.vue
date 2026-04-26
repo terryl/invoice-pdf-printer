@@ -158,6 +158,8 @@ const ScrollWatcher = defineComponent({
 
 const props = defineProps<{
   pdfSrc: string;
+  targetPage?: number | null;
+  targetPageTrigger?: number;
 }>();
 
 // 初始化 PDF 引擎（由 usePdfiumEngine 自动管理）
@@ -267,6 +269,21 @@ const handleThumbnailClick = (pageIndex: number) => {
   }
 };
 
+const scrollToTargetPage = (pageIndex: number | null | undefined): void => {
+  if (pageIndex == null || !scrollCap) return;
+  if (pageIndex < 0) return;
+
+  isSyncing.value = true;
+  currentPage.value = pageIndex;
+  scrollCap.scrollToPage({
+    pageNumber: pageIndex + 1,
+    behavior: "smooth",
+  });
+  setTimeout(() => {
+    isSyncing.value = false;
+  }, 500);
+};
+
 // 为每次 PDF 变化生成唯一 key
 const pdfKey = ref(0);
 watch(
@@ -275,6 +292,13 @@ watch(
     pdfKey.value++;
     currentPage.value = 0;
     scrollCap = null;
+  }
+);
+
+watch(
+  () => [props.targetPage, props.targetPageTrigger],
+  () => {
+    scrollToTargetPage(props.targetPage);
   }
 );
 

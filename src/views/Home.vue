@@ -1,5 +1,11 @@
 <template>
-  <div class="flex flex-col h-screen w-full bg-gray-50">
+  <div
+    class="flex flex-col h-screen w-full bg-gray-50"
+    @dragenter="handleDragEnter"
+    @dragover="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
+  >
     <!-- PDF 引擎预加载（不渲染任何内容） -->
     <PdfEnginePreloader />
 
@@ -141,7 +147,11 @@
         <div
           class="hidden md:block flex-1 h-full rounded-2xl overflow-hidden shadow-inner border border-gray-200"
         >
-          <PdfViewer :pdfSrc="pdfSrc" />
+          <PdfViewer
+            :pdfSrc="pdfSrc"
+            :targetPage="targetPageIndex"
+            :targetPageTrigger="targetPageTrigger"
+          />
         </div>
 
         <!-- 发票列表区域 -->
@@ -174,17 +184,13 @@
             :invoices="cells"
             :pendingDeletions="pendingDeletions"
             @toggleDeletion="toggleDeletion"
+            @selectPage="selectPageFromList"
           />
         </div>
       </div>
 
       <!-- 空状态区域 -->
-      <div
-        v-else
-        class="flex-1 w-full flex items-center justify-center"
-        @dragover.prevent
-        @drop="handleDrop"
-      >
+      <div v-else class="flex-1 w-full flex items-center justify-center">
         <label
           for="fileInput"
           class="w-full max-w-2xl h-64 md:h-96 border-2 border-dashed border-gray-300 rounded-3xl flex flex-col items-center justify-center bg-gray-50/50 hover:bg-blue-50/30 hover:border-blue-400 transition-all duration-300 group cursor-pointer mx-4 md:mx-0"
@@ -231,6 +237,11 @@
       </div>
       <LoadingView :isLoading="isLoading" :hasDetailedProgress="isProcessing" />
     </div>
+    <div v-if="isDraggingFiles" class="drag-overlay pointer-events-none">
+      <div class="drag-overlay-card">
+        松开鼠标以添加 PDF 文件
+      </div>
+    </div>
   </div>
 </template>
 
@@ -275,6 +286,10 @@ const cells: Ref<InvoiceCell[]> = ref([]);
 const isProcessing: Ref<boolean> = ref(false);
 const progress: Ref<number> = ref(0);
 const error: Ref<string | null> = ref(null);
+const targetPageIndex: Ref<number | null> = ref(null);
+const targetPageTrigger: Ref<number> = ref(0);
+const isDraggingFiles: Ref<boolean> = ref(false);
+let dragCounter = 0;
 
 // 批量删除状态
 const pendingDeletions: Ref<Set<number>> = ref(new Set());
@@ -322,6 +337,24 @@ const toPdfFiles = (files: File[]): File[] => {
   );
 };
 
+const hasFilePayload = (event: DragEvent): boolean => {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+};
+
+const addFilesAndMerge = async (files: File[]): Promise<void> => {
+  const pdfFiles = toPdfFiles(files);
+  if (pdfFiles.length === 0) return;
+
+  const dedupedFiles = dedupeFilesByName(pdfFiles);
+  if (dedupedFiles.length === 0) return;
+
+  selectedFiles.value.push(...dedupedFiles);
+  normalizeSelectedFiles();
+  isLoading.value = true;
+  await handleMergePDFs();
+  isLoading.value = false;
+};
+
 const clear = (): void => {
   selectedFiles.value = [];
   processedData.value = { pages: [], invoices: [], files: [] };
@@ -340,6 +373,11 @@ const toggleDeletion = (index: number): void => {
   } else {
     pendingDeletions.value.add(index);
   }
+};
+
+const selectPageFromList = (index: number): void => {
+  targetPageIndex.value = index;
+  targetPageTrigger.value += 1;
 };
 
 // 撤销所有待删除标记
@@ -387,16 +425,38 @@ const removeCell = (index: number): void => {
   toggleDeletion(index);
 };
 
-// 处理拖放文件
-const handleDrop = (event: DragEvent): void => {
+const handleDragEnter = (event: DragEvent): void => {
+  if (!hasFilePayload(event)) return;
   event.preventDefault();
+  dragCounter += 1;
+  isDraggingFiles.value = true;
+};
+
+const handleDragOver = (event: DragEvent): void => {
+  if (!hasFilePayload(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+};
+
+const handleDragLeave = (event: DragEvent): void => {
+  if (!hasFilePayload(event)) return;
+  event.preventDefault();
+  dragCounter = Math.max(0, dragCounter - 1);
+  if (dragCounter === 0) {
+    isDraggingFiles.value = false;
+  }
+};
+
+// 处理拖放文件
+const handleDrop = async (event: DragEvent): Promise<void> => {
+  if (!hasFilePayload(event)) return;
+  event.preventDefault();
+  dragCounter = 0;
+  isDraggingFiles.value = false;
   const files = Array.from(event.dataTransfer?.files || []);
-  const dedupedFiles = dedupeFilesByName(files);
-  if (dedupedFiles.length === 0) return;
-  selectedFiles.value.push(...dedupedFiles);
-  normalizeSelectedFiles();
-  isLoading.value = true;
-  handleMergePDFs().finally(() => (isLoading.value = false));
+  await addFilesAndMerge(files);
 };
 
 // 重新生成 PDF(重新处理所有文件)
@@ -545,48 +605,24 @@ const updateInvoiceCount = async (count: number): Promise<void> => {
 
 // 处理文件选择
 const handleFileChange = async (event: Event): Promise<void> => {
-  const files = toPdfFiles(
-    Array.from((event.target as HTMLInputElement).files || [])
-  );
+  const files = Array.from((event.target as HTMLInputElement).files || []);
   if (files.length === 0) {
     (event.target as HTMLInputElement).value = ""; // 清空 input
     return;
   }
 
-  const dedupedFiles = dedupeFilesByName(files);
-  if (dedupedFiles.length === 0) {
-    (event.target as HTMLInputElement).value = ""; // 清空 input
-    return;
-  }
-
-  selectedFiles.value.push(...dedupedFiles);
-  normalizeSelectedFiles();
-  isLoading.value = true;
-  await handleMergePDFs();
-  isLoading.value = false;
+  await addFilesAndMerge(files);
   (event.target as HTMLInputElement).value = ""; // 清空 input
 };
 
 const handleDirectoryChange = async (event: Event): Promise<void> => {
-  const files = toPdfFiles(
-    Array.from((event.target as HTMLInputElement).files || [])
-  );
+  const files = Array.from((event.target as HTMLInputElement).files || []);
   if (files.length === 0) {
     (event.target as HTMLInputElement).value = ""; // 清空 input
     return;
   }
 
-  const dedupedFiles = dedupeFilesByName(files);
-  if (dedupedFiles.length === 0) {
-    (event.target as HTMLInputElement).value = ""; // 清空 input
-    return;
-  }
-
-  selectedFiles.value.push(...dedupedFiles);
-  normalizeSelectedFiles();
-  isLoading.value = true;
-  await handleMergePDFs();
-  isLoading.value = false;
+  await addFilesAndMerge(files);
   (event.target as HTMLInputElement).value = ""; // 清空 input
 };
 function openPdfPreview() {
@@ -630,5 +666,26 @@ function openPdfPreview() {
 /* 元素移动动画 */
 .cell-list-move {
   transition: transform 0.5s ease; /* 确保移动动画一致 */
+}
+
+.drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(59, 130, 246, 0.08);
+  backdrop-filter: blur(1px);
+}
+
+.drag-overlay-card {
+  padding: 14px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(255, 255, 255, 0.95);
+  color: #2563eb;
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.12);
 }
 </style>

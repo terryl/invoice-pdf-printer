@@ -10,6 +10,7 @@
             ? 'bg-red-50/60 border-red-200 shadow-none'
             : 'bg-white border-black/5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:border-black/10',
         ]"
+        @click="$emit('selectPage', index)"
       >
         <!-- 删除/标记按钮 -->
         <button
@@ -19,7 +20,7 @@
               ? 'opacity-100 bg-red-500 text-white border border-red-500 transform scale-110'
               : 'opacity-0 group-hover:opacity-100 bg-white/90 text-gray-400 border border-gray-200/80 hover:text-red-500 hover:border-red-200 hover:bg-red-50',
           ]"
-          @click="
+          @click.stop="
             (e) => {
               (e.currentTarget as HTMLElement).blur();
               $emit('toggleDeletion', index);
@@ -117,6 +118,7 @@ defineProps<{
 
 defineEmits<{
   (e: "toggleDeletion", index: number): void;
+  (e: "selectPage", index: number): void;
 }>();
 
 /**
