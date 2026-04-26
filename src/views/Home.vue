@@ -281,6 +281,19 @@ onMounted(() => {
   fetchInvoiceCount();
 });
 
+const dedupeFilesByName = (incomingFiles: File[]): File[] => {
+  const existingNames = new Set(selectedFiles.value.map((file) => file.name));
+  const deduped: File[] = [];
+
+  for (const file of incomingFiles) {
+    if (existingNames.has(file.name)) continue;
+    deduped.push(file);
+    existingNames.add(file.name);
+  }
+
+  return deduped;
+};
+
 const clear = (): void => {
   selectedFiles.value = [];
   processedData.value = { pages: [], invoices: [], files: [] };
@@ -350,7 +363,9 @@ const removeCell = (index: number): void => {
 const handleDrop = (event: DragEvent): void => {
   event.preventDefault();
   const files = Array.from(event.dataTransfer?.files || []);
-  selectedFiles.value.push(...files);
+  const dedupedFiles = dedupeFilesByName(files);
+  if (dedupedFiles.length === 0) return;
+  selectedFiles.value.push(...dedupedFiles);
   isLoading.value = true;
   handleMergePDFs().finally(() => (isLoading.value = false));
 };
@@ -503,7 +518,13 @@ const handleFileChange = async (event: Event): Promise<void> => {
   const files = Array.from((event.target as HTMLInputElement).files || []);
   if (files.length === 0) return;
 
-  selectedFiles.value.push(...files);
+  const dedupedFiles = dedupeFilesByName(files);
+  if (dedupedFiles.length === 0) {
+    (event.target as HTMLInputElement).value = ""; // 清空 input
+    return;
+  }
+
+  selectedFiles.value.push(...dedupedFiles);
   isLoading.value = true;
   await handleMergePDFs();
   isLoading.value = false;
