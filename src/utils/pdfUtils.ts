@@ -217,6 +217,23 @@ async function extractSinglePageData(
     const { qrData, timings } = await scanInvoiceQRCode(pdfjsPage);
     let invoiceInfo = parseQRCode(pageNumber, qrData);
 
+    // 始终提取文本内容以获取更准确的信息（如“价税合计”而不是二维码中的“不含税金额”）
+    const textT0 = performance.now();
+    const textContent = await pdfjsPage.getTextContent();
+    const textItems = textContent.items;
+    const fullText = textItems.map((item: any) => item.str).join(" ");
+
+    // 尝试从文本中提取“价税合计”
+    const amountFromText = extractAmount(fullText);
+    if (amountFromText && amountFromText !== "0") {
+      const parsedTextAmount = parseFloat(amountFromText);
+      const parsedQrAmount = parseFloat(invoiceInfo.amount);
+      // 如果文本提取的金额大于二维码中的金额（通常二维码中是不含税金额），则使用文本中的金额
+      if (isNaN(parsedQrAmount) || parsedTextAmount > parsedQrAmount) {
+        invoiceInfo.amount = amountFromText;
+      }
+    }
+
     if (
       !invoiceInfo.amount ||
       invoiceInfo.amount === "0" ||
@@ -224,11 +241,6 @@ async function extractSinglePageData(
       !invoiceInfo.type ||
       !invoiceInfo.number
     ) {
-      const textT0 = performance.now();
-      const textContent = await pdfjsPage.getTextContent();
-      const textItems = textContent.items;
-      const fullText = textItems.map((item: any) => item.str).join(" ");
-
       if (!invoiceInfo.type) {
         invoiceInfo.type = extractInvoiceType(fullText);
       }
@@ -537,10 +549,11 @@ function extractInvoiceType(text: string): string {
  */
 function extractAmount(text: string): string {
   const amountPatterns = [
-    /价税合计[：:]?\s*¥?\s*([\d,]+\.?\d*)/i,
-    /合计[：:]?\s*¥?\s*([\d,]+\.?\d*)/i,
-    /总计[：:]?\s*¥?\s*([\d,]+\.?\d*)/i,
-    /金额[：:]?\s*¥?\s*([\d,]+\.?\d*)/i,
+    /价税合计(?:[（(]大写[）)])?[^\d¥￥]*?(?:[（(]小写[）)])?[^\d¥￥]*?[¥￥]\s*([\d,]+\.?\d*)/i,
+    /价税合计[：:]?\s*[¥￥]?\s*([\d,]+\.?\d*)/i,
+    /合计[：:]?\s*[¥￥]?\s*([\d,]+\.?\d*)/i,
+    /总计[：:]?\s*[¥￥]?\s*([\d,]+\.?\d*)/i,
+    /金额[：:]?\s*[¥￥]?\s*([\d,]+\.?\d*)/i,
   ];
 
   for (const pattern of amountPatterns) {
@@ -977,6 +990,11 @@ function parseQRCode(
     }
     return raw;
   };
+
+  // 兼容数电票（URL/XML等非传统逗号分隔格式）
+  if (qrCodeData.startsWith("http") || qrCodeData.startsWith("<") || !qrCodeData.includes(",")) {
+    return { pageNumber, type: "", amount: "0", date: "", fileName: "" };
+  }
 
   const [constNumber, type, code, number, amount, date, checkCode] =
     qrCodeData.split(",");
